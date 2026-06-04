@@ -6,7 +6,7 @@ _pool: asyncpg.Pool | None = None
 
 async def create_pool(dsn: str) -> None:
     global _pool
-    _pool = await asyncpg.create_pool(dsn=dsn, min_size=2, max_size=10)
+    _pool = await asyncpg.create_pool(dsn=dsn, min_size=2, max_size=10, statement_cache_size=0)
 
 
 async def close_pool() -> None:

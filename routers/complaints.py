@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File
 from schemas.complaint import ComplaintCreate, ComplaintUpdate
 from db import database as db
+from core.utils import utcnow
 from db.supabase import upload_file
 
 router = APIRouter()
@@ -32,10 +33,10 @@ async def upload_complaint_image(file: UploadFile = File(...)):
 
 @router.post("/complaints")
 async def create_complaint(body: ComplaintCreate):
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     row = await db.fetch_one(
-        """INSERT INTO complaints (user_id, name, order_number, order_id, description, image_url, status, created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,'open',$7,$7) RETURNING *""",
+        '''INSERT INTO "Complaint" ("userId", name, order_number, "orderId", description, image_url, status, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,'open',$7,$7) RETURNING *''',
         body.userId, body.name, body.order_number, body.orderId,
         body.description, body.image_url, now,
     )
@@ -45,7 +46,7 @@ async def create_complaint(body: ComplaintCreate):
 @router.get("/user/{user_id}/complaints")
 async def get_user_complaints(user_id: int):
     rows = await db.fetch_all(
-        "SELECT * FROM complaints WHERE user_id = $1 ORDER BY id DESC", user_id
+        'SELECT * FROM "Complaint" WHERE "userId" = $1 ORDER BY id DESC', user_id
     )
     return [_serialize(r) for r in rows]
 
@@ -54,16 +55,16 @@ async def get_user_complaints(user_id: int):
 async def admin_list_complaints(status: str | None = Query(None)):
     if status:
         rows = await db.fetch_all(
-            """SELECT c.*, u.first_name as user_first_name, u.last_name as user_last_name
-               FROM complaints c LEFT JOIN users u ON u.id = c.user_id
-               WHERE c.status = $1 ORDER BY c.id DESC""",
+            '''SELECT c.*, u.first_name as user_first_name, u.last_name as user_last_name
+               FROM "Complaint" c LEFT JOIN "User" u ON u.id = c."userId"
+               WHERE c.status = $1 ORDER BY c.id DESC''',
             status,
         )
     else:
         rows = await db.fetch_all(
-            """SELECT c.*, u.first_name as user_first_name, u.last_name as user_last_name
-               FROM complaints c LEFT JOIN users u ON u.id = c.user_id
-               ORDER BY c.id DESC"""
+            '''SELECT c.*, u.first_name as user_first_name, u.last_name as user_last_name
+               FROM "Complaint" c LEFT JOIN "User" u ON u.id = c."userId"
+               ORDER BY c.id DESC'''
         )
     return [_serialize(r) for r in rows]
 
@@ -71,9 +72,9 @@ async def admin_list_complaints(status: str | None = Query(None)):
 @router.get("/admin/complaints/{complaint_id}")
 async def admin_get_complaint(complaint_id: int):
     row = await db.fetch_one(
-        """SELECT c.*, u.first_name as user_first_name, u.last_name as user_last_name
-           FROM complaints c LEFT JOIN users u ON u.id = c.user_id
-           WHERE c.id = $1""",
+        '''SELECT c.*, u.first_name as user_first_name, u.last_name as user_last_name
+           FROM "Complaint" c LEFT JOIN "User" u ON u.id = c."userId"
+           WHERE c.id = $1''',
         complaint_id,
     )
     if not row:
@@ -83,18 +84,18 @@ async def admin_get_complaint(complaint_id: int):
 
 @router.put("/admin/complaints/{complaint_id}")
 async def admin_update_complaint(complaint_id: int, body: ComplaintUpdate):
-    complaint = await db.fetch_one("SELECT * FROM complaints WHERE id = $1", complaint_id)
+    complaint = await db.fetch_one('SELECT * FROM "Complaint" WHERE id = $1', complaint_id)
     if not complaint:
         raise HTTPException(status_code=404, detail="Complaint not found")
 
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     row = await db.fetch_one(
-        """UPDATE complaints SET
+        '''UPDATE "Complaint" SET
            status = COALESCE($2, status),
            admin_notes = COALESCE($3, admin_notes),
            admin_reply = COALESCE($4, admin_reply),
            updated_at = $5
-           WHERE id = $1 RETURNING *""",
+           WHERE id = $1 RETURNING *''',
         complaint_id, body.status, body.admin_notes, body.admin_reply, now,
     )
     return {"message": "Complaint updated", "complaint": _serialize(row)}
@@ -102,15 +103,15 @@ async def admin_update_complaint(complaint_id: int, body: ComplaintUpdate):
 
 @router.get("/admin/analytics/complaints")
 async def complaints_analytics():
-    total = await db.fetch_val("SELECT COUNT(*) FROM complaints")
+    total = await db.fetch_val('SELECT COUNT(*) FROM "Complaint"')
     status_rows = await db.fetch_all(
-        "SELECT status, COUNT(*) as count FROM complaints GROUP BY status"
+        'SELECT status, COUNT(*) as count FROM "Complaint" GROUP BY status'
     )
     by_status = {r["status"]: r["count"] for r in status_rows}
 
     monthly_rows = await db.fetch_all(
-        """SELECT TO_CHAR(created_at, 'YYYY-MM') as month, COUNT(*) as count
-           FROM complaints GROUP BY month ORDER BY month DESC LIMIT 12"""
+        '''SELECT TO_CHAR(created_at, \'YYYY-MM\') as month, COUNT(*) as count
+           FROM "Complaint" GROUP BY month ORDER BY month DESC LIMIT 12'''
     )
     monthly_trend = {r["month"]: r["count"] for r in monthly_rows}
 

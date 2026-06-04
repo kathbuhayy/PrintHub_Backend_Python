@@ -5,7 +5,8 @@ from schemas.user import (
     AdminCreateUserRequest, AdminUpdateUserRequest,
 )
 from db import database as db
-from core import otp_store, security
+from core.utils import utcnow
+from core import security
 
 router = APIRouter()
 
@@ -31,7 +32,7 @@ def _serialize_user(u: dict) -> dict:
 
 @router.get("/user-profile/{user_id}")
 async def get_user_profile(user_id: int):
-    user = await db.fetch_one("SELECT * FROM users WHERE id = $1", user_id)
+    user = await db.fetch_one('SELECT * FROM "User" WHERE id = $1', user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return _serialize_user(user)
@@ -39,7 +40,7 @@ async def get_user_profile(user_id: int):
 
 @router.put("/user-profile/{user_id}")
 async def update_user_profile(user_id: int, body: UpdateProfileRequest):
-    user = await db.fetch_one("SELECT * FROM users WHERE id = $1", user_id)
+    user = await db.fetch_one('SELECT * FROM "User" WHERE id = $1', user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -64,13 +65,13 @@ async def update_user_profile(user_id: int, body: UpdateProfileRequest):
         first_name = parts[0]
         last_name = parts[1] if len(parts) > 1 else ""
 
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     await db.execute(
-        """UPDATE users SET first_name=$1, last_name=$2, email=COALESCE($3, email),
+        '''UPDATE "User" SET first_name=$1, last_name=$2, email=COALESCE($3, email),
            phone=COALESCE($4, phone), address=COALESCE($5, address),
            gender=COALESCE($6, gender), avatar_url=COALESCE($7, avatar_url),
            birthday=COALESCE($8::timestamptz, birthday), updated_at=$9
-           WHERE id=$10""",
+           WHERE id=$10''',
         first_name, last_name,
         body.email, body.phone, body.address,
         body.gender, body.avatar_url,
@@ -82,7 +83,7 @@ async def update_user_profile(user_id: int, body: UpdateProfileRequest):
 
 @router.put("/profile/{user_id}/password")
 async def change_password(user_id: int, body: ChangePasswordRequest):
-    user = await db.fetch_one("SELECT * FROM users WHERE id = $1", user_id)
+    user = await db.fetch_one('SELECT * FROM "User" WHERE id = $1', user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -95,9 +96,9 @@ async def change_password(user_id: int, body: ChangePasswordRequest):
             detail="Password must be 8-12 characters with uppercase, number, and special character",
         )
 
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     await db.execute(
-        "UPDATE users SET password=$1, updated_at=$2 WHERE id=$3",
+        'UPDATE "User" SET password=$1, updated_at=$2 WHERE id=$3',
         security.hash_password(body.newPassword), now, user_id,
     )
     return {"message": "Password updated successfully"}
@@ -108,7 +109,7 @@ async def change_password(user_id: int, body: ChangePasswordRequest):
 @router.get("/admin/users")
 async def admin_list_users():
     rows = await db.fetch_all(
-        "SELECT id, first_name, last_name, email, role, status, last_login, join_date FROM users ORDER BY id DESC"
+        'SELECT id, first_name, last_name, email, role, status, last_login, join_date FROM "User" ORDER BY id DESC'
     )
     return [
         {
@@ -126,18 +127,18 @@ async def admin_list_users():
 
 @router.post("/admin/users")
 async def admin_create_user(body: AdminCreateUserRequest):
-    existing = await db.fetch_one("SELECT id FROM users WHERE email = $1", body.email)
+    existing = await db.fetch_one('SELECT id FROM "User" WHERE email = $1', body.email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already exists")
 
     parts = body.name.strip().split(" ", 1)
     first_name = parts[0]
     last_name = parts[1] if len(parts) > 1 else ""
-    now = datetime.now(timezone.utc)
+    now = utcnow()
 
     await db.execute(
-        """INSERT INTO users (first_name, last_name, email, password, role, status, join_date, created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,'active',$6,$6,$6)""",
+        '''INSERT INTO "User" (first_name, last_name, email, password, role, status, join_date, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,'active',$6,$6,$6)''',
         first_name, last_name, body.email,
         security.hash_password(body.password), body.role, now,
     )
@@ -146,7 +147,7 @@ async def admin_create_user(body: AdminCreateUserRequest):
 
 @router.put("/admin/users/{user_id}")
 async def admin_update_user(user_id: int, body: AdminUpdateUserRequest):
-    user = await db.fetch_one("SELECT * FROM users WHERE id = $1", user_id)
+    user = await db.fetch_one('SELECT * FROM "User" WHERE id = $1', user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -157,11 +158,11 @@ async def admin_update_user(user_id: int, body: AdminUpdateUserRequest):
         first_name = parts[0]
         last_name = parts[1] if len(parts) > 1 else ""
 
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     await db.execute(
-        """UPDATE users SET first_name=$1, last_name=$2,
+        '''UPDATE "User" SET first_name=$1, last_name=$2,
            email=COALESCE($3, email), role=COALESCE($4, role),
-           status=COALESCE($5, status), updated_at=$6 WHERE id=$7""",
+           status=COALESCE($5, status), updated_at=$6 WHERE id=$7''',
         first_name, last_name, body.email, body.role, body.status, now, user_id,
     )
     return {"message": "User updated successfully"}
@@ -169,22 +170,22 @@ async def admin_update_user(user_id: int, body: AdminUpdateUserRequest):
 
 @router.delete("/admin/users/{user_id}")
 async def admin_delete_user(user_id: int):
-    user = await db.fetch_one("SELECT * FROM users WHERE id = $1", user_id)
+    user = await db.fetch_one('SELECT * FROM "User" WHERE id = $1', user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     pool = db.get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(
-                """INSERT INTO archived_users (user_id, first_name, last_name, email, password, phone, address, role, status, last_login, join_date, gender, birthday, position, archived_at)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)""",
+                '''INSERT INTO "ArchivedUser" (user_id, first_name, last_name, email, password, phone, address, role, status, last_login, join_date, gender, birthday, position, archived_at)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)''',
                 user["id"], user["first_name"], user["last_name"], user["email"],
                 user["password"], user["phone"], user["address"], user["role"],
                 user["status"], user.get("last_login"), user.get("join_date"),
                 user.get("gender"), user.get("birthday"), user.get("position"), now,
             )
-            await conn.execute("DELETE FROM users WHERE id = $1", user_id)
+            await conn.execute('DELETE FROM "User" WHERE id = $1', user_id)
 
     return {"message": "User archived successfully"}

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 from db import database as db
+from core.utils import utcnow
 from services.paymongo import create_checkout, get_session_status, verify_webhook_signature
 from core.config import settings
 from datetime import datetime, timezone
@@ -27,16 +28,16 @@ def _serialize_order(o: dict) -> dict:
 @router.post("/payments/checkout")
 async def checkout(body: CheckoutRequest):
     order = await db.fetch_one(
-        "SELECT * FROM orders WHERE id = $1 AND deleted_at IS NULL", body.orderId
+        'SELECT * FROM "Order" WHERE id = $1 AND deleted_at IS NULL', body.orderId
     )
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
     items = await db.fetch_all(
-        """SELECT oi.quantity, oi.unit_price, p.name as product_name, p.images as product_images
-           FROM order_items oi
-           JOIN products p ON p.id = oi.product_id
-           WHERE oi.order_id = $1""",
+        '''SELECT oi.quantity, oi.unit_price, p.name as product_name, p.images as product_images
+           FROM "OrderItem" oi
+           JOIN "Product" p ON p.id = oi."productId"
+           WHERE oi."orderId" = $1''',
         body.orderId,
     )
 
@@ -52,9 +53,9 @@ async def checkout(body: CheckoutRequest):
 
     result = await create_checkout(dict(order), items_payload, body.returnBase)
 
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     await db.execute(
-        "UPDATE orders SET paymongo_session_id = $1, checkout_url = $2, payment_status = 'awaiting_payment', updated_at = $3 WHERE id = $4",
+        'UPDATE "Order" SET paymongo_session_id = $1, checkout_url = $2, payment_status = \'awaiting_payment\', updated_at = $3 WHERE id = $4',
         result["session_id"], result["checkout_url"], now, body.orderId,
     )
 
@@ -64,7 +65,7 @@ async def checkout(body: CheckoutRequest):
 @router.get("/payments/{order_id}/status")
 async def payment_status(order_id: int):
     order = await db.fetch_one(
-        "SELECT * FROM orders WHERE id = $1 AND deleted_at IS NULL", order_id
+        'SELECT * FROM "Order" WHERE id = $1 AND deleted_at IS NULL', order_id
     )
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -76,12 +77,12 @@ async def payment_status(order_id: int):
         try:
             remote_status = await get_session_status(order["paymongo_session_id"])
             if remote_status == "paid":
-                now = datetime.now(timezone.utc)
+                now = utcnow()
                 await db.execute(
-                    "UPDATE orders SET payment_status = 'paid', status = 'confirmed', updated_at = $1 WHERE id = $2",
+                    'UPDATE "Order" SET payment_status = \'paid\', status = \'confirmed\', updated_at = $1 WHERE id = $2',
                     now, order_id,
                 )
-                updated = await db.fetch_one("SELECT * FROM orders WHERE id = $1", order_id)
+                updated = await db.fetch_one('SELECT * FROM "Order" WHERE id = $1', order_id)
                 return {"payment_status": "paid", "order": _serialize_order(updated)}
             return {"payment_status": remote_status, "order": _serialize_order(order)}
         except Exception:
@@ -114,16 +115,16 @@ async def payment_webhook(request: Request):
         order = None
         if ref:
             try:
-                order = await db.fetch_one("SELECT * FROM orders WHERE id = $1", int(ref))
+                order = await db.fetch_one('SELECT * FROM "Order" WHERE id = $1', int(ref))
             except Exception:
                 pass
         if not order and session_id:
-            order = await db.fetch_one("SELECT * FROM orders WHERE paymongo_session_id = $1", session_id)
+            order = await db.fetch_one('SELECT * FROM "Order" WHERE paymongo_session_id = $1', session_id)
 
         if order and order["payment_status"] != "paid":
-            now = datetime.now(timezone.utc)
+            now = utcnow()
             await db.execute(
-                "UPDATE orders SET payment_status = 'paid', status = 'confirmed', updated_at = $1 WHERE id = $2",
+                'UPDATE "Order" SET payment_status = \'paid\', status = \'confirmed\', updated_at = $1 WHERE id = $2',
                 now, order["id"],
             )
 

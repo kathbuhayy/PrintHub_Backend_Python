@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from schemas.user import (
     LoginRequest, SendOtpRequest, VerifyOtpRequest,
@@ -6,6 +5,7 @@ from schemas.user import (
 )
 from db import database as db
 from core import otp_store, security
+from core.utils import utcnow
 from services.email import send_otp_email
 
 router = APIRouter()
@@ -14,11 +14,11 @@ router = APIRouter()
 @router.post("/login")
 async def login(body: LoginRequest):
     user = await db.fetch_one(
-        "SELECT * FROM users WHERE email = $1", body.email
+        'SELECT * FROM "User" WHERE email = $1', body.email
     )
     if not user:
         archived = await db.fetch_one(
-            "SELECT * FROM archived_users WHERE email = $1", body.email
+            'SELECT * FROM "ArchivedUser" WHERE email = $1', body.email
         )
         if archived:
             otp = security.generate_otp()
@@ -34,8 +34,8 @@ async def login(body: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     await db.execute(
-        "UPDATE users SET last_login = $1 WHERE id = $2",
-        datetime.now(timezone.utc),
+        'UPDATE "User" SET last_login = $1 WHERE id = $2',
+        utcnow(),
         user["id"],
     )
 
@@ -52,7 +52,7 @@ async def login(body: LoginRequest):
 
 @router.post("/register/send-otp")
 async def register_send_otp(body: SendOtpRequest):
-    existing = await db.fetch_one("SELECT id FROM users WHERE email = $1", body.email)
+    existing = await db.fetch_one('SELECT id FROM "User" WHERE email = $1', body.email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     otp = security.generate_otp()
@@ -83,15 +83,15 @@ async def register_complete(body: RegisterCompleteRequest):
             detail="Password must be 8-12 characters with uppercase, number, and special character",
         )
 
-    existing = await db.fetch_one("SELECT id FROM users WHERE email = $1", body.email)
+    existing = await db.fetch_one('SELECT id FROM "User" WHERE email = $1', body.email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
     hashed = security.hash_password(body.password)
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     await db.fetch_one(
-        """INSERT INTO users (first_name, last_name, email, phone, address, password, role, status, join_date, created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,2,'active',$7,$7,$7) RETURNING id""",
+        '''INSERT INTO "User" (first_name, last_name, email, phone, address, password, role, status, join_date, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,2,'active',$7,$7,$7) RETURNING id''',
         body.firstName, body.lastName, body.email, body.phone, body.address, hashed, now,
     )
     otp_store.clear(body.email)
@@ -99,9 +99,17 @@ async def register_complete(body: RegisterCompleteRequest):
 
 
 @router.post("/password/request-otp")
+async def password_request_otp(body: SendOtpRequest):
+    return await _password_send_otp(body)
+
+
 @router.post("/password/send-otp")
 async def password_send_otp(body: SendOtpRequest):
-    user = await db.fetch_one("SELECT id FROM users WHERE email = $1", body.email)
+    return await _password_send_otp(body)
+
+
+async def _password_send_otp(body: SendOtpRequest):
+    user = await db.fetch_one('SELECT id FROM "User" WHERE email = $1', body.email)
     if not user:
         raise HTTPException(status_code=404, detail="Email not found")
     otp = security.generate_otp()
@@ -129,9 +137,9 @@ async def reset_password(body: ResetPasswordRequest):
             detail="Password must be 8-12 characters with uppercase, number, and special character",
         )
 
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     result = await db.execute(
-        "UPDATE users SET password = $1, updated_at = $2 WHERE email = $3",
+        'UPDATE "User" SET password = $1, updated_at = $2 WHERE email = $3',
         security.hash_password(body.newPassword), now, body.email,
     )
     if result == "UPDATE 0":
@@ -147,22 +155,22 @@ async def reactivate_verify_otp(body: VerifyOtpRequest):
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
 
     archived = await db.fetch_one(
-        "SELECT * FROM archived_users WHERE email = $1", body.email
+        'SELECT * FROM "ArchivedUser" WHERE email = $1', body.email
     )
     if not archived:
         raise HTTPException(status_code=404, detail="Archived user not found")
 
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     pool = db.get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(
-                """INSERT INTO users (first_name, last_name, email, password, phone, address, role, status, join_date, created_at, updated_at)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$8,$8)""",
+                '''INSERT INTO "User" (first_name, last_name, email, password, phone, address, role, status, join_date, created_at, updated_at)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$8,$8)''',
                 archived["first_name"], archived["last_name"], archived["email"],
                 archived["password"], archived["phone"], archived["address"],
                 archived.get("role", 2), now,
             )
-            await conn.execute("DELETE FROM archived_users WHERE email = $1", body.email)
+            await conn.execute('DELETE FROM "ArchivedUser" WHERE email = $1', body.email)
 
     return {"message": "Account reactivated successfully"}

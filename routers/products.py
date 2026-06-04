@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File
 from schemas.product import ProductCreate, ProductUpdate, AddStockRequest
 from db import database as db
+from core.utils import utcnow
 from db.supabase import upload_file
 
 router = APIRouter()
@@ -16,7 +17,6 @@ def _serialize_product(p: dict) -> dict:
     for k, v in result.items():
         if isinstance(v, datetime):
             result[k] = v.isoformat()
-    # Decimal → float
     if result.get("price") is not None:
         result["price"] = float(result["price"])
     return result
@@ -26,10 +26,10 @@ def _serialize_product(p: dict) -> dict:
 async def list_products(page: int = Query(1, ge=1), limit: int = Query(10, ge=1, le=100)):
     offset = (page - 1) * limit
     total = await db.fetch_val(
-        "SELECT COUNT(*) FROM products WHERE active = true AND deleted_at IS NULL"
+        'SELECT COUNT(*) FROM "Product" WHERE active = true AND deleted_at IS NULL'
     )
     rows = await db.fetch_all(
-        "SELECT * FROM products WHERE active = true AND deleted_at IS NULL ORDER BY id DESC LIMIT $1 OFFSET $2",
+        'SELECT * FROM "Product" WHERE active = true AND deleted_at IS NULL ORDER BY id DESC LIMIT $1 OFFSET $2',
         limit, offset,
     )
     return {
@@ -51,7 +51,7 @@ async def low_stock(
 ):
     offset = (page - 1) * limit
     rows = await db.fetch_all(
-        "SELECT * FROM products WHERE stock <= $1 AND deleted_at IS NULL ORDER BY stock ASC LIMIT $2 OFFSET $3",
+        'SELECT * FROM "Product" WHERE stock <= $1 AND deleted_at IS NULL ORDER BY stock ASC LIMIT $2 OFFSET $3',
         threshold, limit, offset,
     )
     return [_serialize_product(r) for r in rows]
@@ -60,7 +60,7 @@ async def low_stock(
 @router.get("/products/{product_id}")
 async def get_product(product_id: int):
     product = await db.fetch_one(
-        "SELECT * FROM products WHERE id = $1 AND deleted_at IS NULL", product_id
+        'SELECT * FROM "Product" WHERE id = $1 AND deleted_at IS NULL', product_id
     )
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -69,9 +69,9 @@ async def get_product(product_id: int):
 
 @router.post("/products")
 async def create_product(body: ProductCreate):
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     row = await db.fetch_one(
-        """INSERT INTO products (
+        '''INSERT INTO "Product" (
             name, sku, description, price, currency, stock,
             width_mm, height_mm, depth_mm, material,
             color_options, size_options, material_options, side_options,
@@ -85,7 +85,7 @@ async def create_product(body: ProductCreate):
             $11,$12,$13,$14,$15,$16,$17,$18,$19,
             $20,$21,$22,$23,$24,$25,$26,$27,$28,
             $29,$29
-        ) RETURNING *""",
+        ) RETURNING *''',
         body.name, body.sku, body.description, body.price, body.currency, body.stock,
         body.width_mm, body.height_mm, body.depth_mm, body.material,
         body.color_options, body.size_options, body.material_options, body.side_options,
@@ -101,7 +101,7 @@ async def create_product(body: ProductCreate):
 @router.put("/products/{product_id}")
 async def update_product(product_id: int, body: ProductUpdate):
     existing = await db.fetch_one(
-        "SELECT * FROM products WHERE id = $1 AND deleted_at IS NULL", product_id
+        'SELECT * FROM "Product" WHERE id = $1 AND deleted_at IS NULL', product_id
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -110,13 +110,13 @@ async def update_product(product_id: int, body: ProductUpdate):
     if not fields:
         return {"message": "No changes", "product": _serialize_product(existing)}
 
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     fields["updated_at"] = now
 
     set_clause = ", ".join(f"{k} = ${i+2}" for i, k in enumerate(fields))
     values = list(fields.values())
     row = await db.fetch_one(
-        f"UPDATE products SET {set_clause} WHERE id = $1 RETURNING *",
+        f'UPDATE "Product" SET {set_clause} WHERE id = $1 RETURNING *',
         product_id, *values,
     )
     return {"message": "Product updated", "product": _serialize_product(row)}
@@ -125,24 +125,20 @@ async def update_product(product_id: int, body: ProductUpdate):
 @router.post("/products/{product_id}/add-stock")
 async def add_stock(product_id: int, body: AddStockRequest):
     existing = await db.fetch_one(
-        "SELECT * FROM products WHERE id = $1 AND deleted_at IS NULL", product_id
+        'SELECT * FROM "Product" WHERE id = $1 AND deleted_at IS NULL', product_id
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    now = datetime.now(timezone.utc)
-    update_qty = ""
-    if body.quantity_options is not None:
-        update_qty = ", quantity_options = $3"
-
+    now = utcnow()
     if body.quantity_options is not None:
         row = await db.fetch_one(
-            f"UPDATE products SET stock = stock + $2, quantity_options = $3, updated_at = $4 WHERE id = $1 RETURNING *",
+            'UPDATE "Product" SET stock = stock + $2, quantity_options = $3, updated_at = $4 WHERE id = $1 RETURNING *',
             product_id, body.add, body.quantity_options, now,
         )
     else:
         row = await db.fetch_one(
-            "UPDATE products SET stock = stock + $2, updated_at = $3 WHERE id = $1 RETURNING *",
+            'UPDATE "Product" SET stock = stock + $2, updated_at = $3 WHERE id = $1 RETURNING *',
             product_id, body.add, now,
         )
 
@@ -152,14 +148,14 @@ async def add_stock(product_id: int, body: AddStockRequest):
 @router.delete("/products/{product_id}")
 async def delete_product(product_id: int):
     existing = await db.fetch_one(
-        "SELECT * FROM products WHERE id = $1 AND deleted_at IS NULL", product_id
+        'SELECT * FROM "Product" WHERE id = $1 AND deleted_at IS NULL', product_id
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     row = await db.fetch_one(
-        "UPDATE products SET deleted_at = $1, updated_at = $1 WHERE id = $2 RETURNING *",
+        'UPDATE "Product" SET deleted_at = $1, updated_at = $1 WHERE id = $2 RETURNING *',
         now, product_id,
     )
     return {"message": "Product deleted", "product": _serialize_product(row)}
